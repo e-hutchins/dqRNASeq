@@ -24,7 +24,7 @@
 #   SOFTWARE.
 #-----------------------------------------------------------------------------
 
-# version 110114
+# version 021617EH
 
 export LANG=en_EN
 StlJucLen=8
@@ -55,22 +55,44 @@ genes=($genelist)
 IFS=$OIFS
 
 prefix=${R1bam%.bam}
-tmpfile1=$RANDOM$RANDOM$RANDOM".tmp"
-#tmpfile2=$RANDOM$RANDOM$RANDOM".tmp"
+tmpfile=$RANDOM$RANDOM$RANDOM".tmp"
 Outfile1=$prefix".prefixPE"$StlJucLen".MQ"$MAQ"_MINREAD"$MINREAD".txt"
 Outfile2=$prefix".STLprefixPE"$StlJucLen".MQ"$MAQ"_MINREAD"$MINREAD".txt"
 Outfile3=$prefix".uniqSTLprefixPE"$StlJucLen".MQ"$MAQ"_MINREAD"$MINREAD".txt"
 Outfile4=$prefix".uniqprefixPE"$StlJucLen".MQ"$MAQ"_MINREAD"$MINREAD".txt"
 
-samtools view "$R1bam" | awk -v MAQ=$MAQ '$5>=MAQ { if ( $2==99 ){print $1"\t"$3"\t"$4"\t"$4+$9-1}}'  > $tmpfile1
-if [ -s "$tmpfile1" ]; then
-	join -j 1 <( join -j 1 <( sort -bk 1 $tmpfile1 ) <( zcat "$R1fq" | awk -v LEN=$StlJucLen 'NR%4==1{name=substr($1,2,length($1)-1)} NR%4==2{print name"\t"substr($1,1,LEN)}' | sort -bk 1 )) <( zcat "$R2fq" | awk -v LEN=$StlJucLen 'NR%4==1{name=substr($1,2,length($1)-1)} NR%4==2{print name"\t"substr($1,1,LEN)}' | sort -bk 1 ) | awk '{print $2"\t"$3"\t"$4"\t"$5"\t"$6}' | sort -k1 -k2 -k3 -k4 -k5 | uniq -c | awk -v MINREAD=$MINREAD '$1>=MINREAD{print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$1}' > $Outfile1
+#for R1 in pair, make R1 bam
+samtools view "$R1bam" | awk -v MAQ=$MAQ '$5>=MAQ { if ( $2==99 ){print $1"\t"$3"\t"$4"\t"$4+$9-1}}' > ${tmpfile}.R1.bam
+
+#for R2 in pair, make R2 bam
+samtools view "$R1bam" | awk -v MAQ=$MAQ '$5>=MAQ { if ( $2==163) {print $1"\t"$3"\t"$4"\t"$4+$9-1}}' > ${tmpfile}.R2.bam
+
+#make list of headers and UMIs
+zcat "$R1fq" | awk -v LEN=$StlJucLen 'NR%4==1{name=substr($1,2,length($1)-1)} NR%4==2{print name"\t"substr($1,1,LEN)}' > ${tmpfile}.R1.fq &
+zcat "$R2fq" | awk -v LEN=$StlJucLen 'NR%4==1{name=substr($1,2,length($1)-1)} NR%4==2{print name"\t"substr($1,1,LEN)}' > ${tmpfile}.R2.fq &
+wait;
+
+#sort above list
+sort -S16G -T ./ -b -k1,1 ${tmpfile}.R1.fq > ${tmpfile}.R1.fq.sorted &
+sort -S16G -T ./ -b -k1,1 ${tmpfile}.R2.fq > ${tmpfile}.R2.fq.sorted &
+wait;
+
+if [ -s "${tmpfile}.R1.bam" ]; then
+    echo -e "R1 bam exists; sorting"
+    sort -S16G -T ./ -b -k1,1 ${tmpfile}.R1.bam > ${tmpfile}.R1.bam.sorted #sort R1 bam
+	join -j 1 <( join -j 1 ${tmpfile}.R1.bam.sorted ${tmpfile}.R1.fq.sorted ) <( cat ${tmpfile}.R2.fq.sorted ) | awk '{print $2"\t"$3"\t"$4"\t"$5"\t"$6}' > ${tmpfile}.joined1 #join R1 bam with R1 fastq, join resulting file with R2 fastq
+	sort -S16G -T ./ -k1,1 -k2,2 -k3,3 -k4,4 -k5,5 ${tmpfile}.joined1 > ${tmpfile}.joined1.sorted
+	uniq -c ${tmpfile}.joined1.sorted | awk -v MINREAD=$MINREAD '$1>=MINREAD{print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$1}' > $Outfile1
 fi
 
-samtools view "$R1bam" | awk -v MAQ=$MAQ '$5>=MAQ { if ( $2==163) {print $1"\t"$3"\t"$4"\t"$4+$9-1}}' > $tmpfile1
-if [ -s "$tmpfile1" ]; then
-	join -j 1 <( join -j 1 <( sort -bk 1 $tmpfile1 ) <( zcat "$R2fq" | awk -v LEN=$StlJucLen 'NR%4==1{name=substr($1,2,length($1)-1)} NR%4==2{print name"\t"substr($1,1,LEN)}' | sort -bk 1 )) <( zcat "$R1fq" | awk -v LEN=$StlJucLen 'NR%4==1{name=substr($1,2,length($1)-1)} NR%4==2{print name"\t"substr($1,1,LEN)}' | sort -bk 1 ) | awk '{print $2"\t"$3"\t"$4"\t"$5"\t"$6}' | sort -k1 -k2 -k3 -k4 -k5 | uniq -c | awk -v MINREAD=$MINREAD '$1>=MINREAD{print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$1}' >> $Outfile1
+if [ -s "${tmpfile}.R2.bam" ]; then
+    echo -e "R2 bam exists; sorting"
+    sort -S16G -T ./ -b -k1,1 ${tmpfile}.R2.bam > ${tmpfile}.R2.bam.sorted #sort R2 bam
+	join -j 1 <( join -j 1 ${tmpfile}.R2.bam.sorted ${tmpfile}.R2.fq.sorted ) <( cat ${tmpfile}.R1.fq.sorted ) | awk '{print $2"\t"$3"\t"$4"\t"$5"\t"$6}' > ${tmpfile}.joined2 #join R2 bam with R1 fastq, join resulting file with R1 fastq
+	sort -S16G -T ./ -k1,1 -k2,2 -k3,3 -k4,4 -k5,5 ${tmpfile}.joined2 > ${tmpfile}.joined2.sorted
+	uniq -c ${tmpfile}.joined2.sorted | awk -v MINREAD=$MINREAD '$1>=MINREAD{print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$1}' >> $Outfile1
 fi
+
 
 STLsize=$(head -n 1 $STLfile | wc -c)
 let STLsize=STLsize-1
@@ -83,4 +105,11 @@ join -j 1 <( cut -f 1,6 $Outfile2 | sort -bk 1 | awk 'BEGIN{Name="---"; Sum=0} {
 
 join -j 1 <( cut -f 1,6 $Outfile1 | sort -bk 1 | awk 'BEGIN{Name="---"; Sum=0} {if (Name==$1){Sum+=$2}else{if (Name!="---")print Name"\t"Sum; Name=$1; Sum=$2}} END{print Name"\t"Sum}' ) <( join -j 1 <( cut -f 1 $Outfile1 | sort -bk 1 | uniq -c | awk '{print $2"\t"$1}' ) <( join -j 1 <( cut -f 1,2,3 $Outfile1 | sort -k1 -k2 -k3 | uniq | cut -f 1 | uniq -c | awk '{print $2"\t"$1}' | sort -bk 1 ) <( cut -f 1,4,5 $Outfile1 | sort -k1 -k2 -k3 | uniq | cut -f 1 | uniq -c | awk '{print $2"\t"$1}' | sort -bk 1 ))) | awk '{print $1"\t"$2"\t"$3"\t"$4"\t"$5}'> $Outfile4
 
-rm $tmpfile1
+
+#add headers to output files
+sed -i '1itranscript_id\tstart\tstop\tR1_STL\tR2_STL\nReadPairs' ${Outfile1}
+sed -i '1itranscript_id\tstart\tstop\tR1_STL\tR2_STL\nReadPairs' ${Outfile2}
+sed -i '1itranscript_id\tnReadPairs\tnSTL+nUSS\tnUSS\tnSTL' ${Outfile3}
+sed -i '1itranscript_id\tnReadPairs\tnSTL+nUSS\tnUSS\tnSTL' ${Outfile4}
+
+rm *.tmp*
